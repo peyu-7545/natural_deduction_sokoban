@@ -1,4 +1,4 @@
-import { toSubscript } from "./util.js";
+import { toSubscript } from "./util.mjs";
 
 const tileSize = 32; // tileの一辺の長さ[px]
 
