@@ -47,3 +47,7 @@ class Stage {
         this.entityTable = this.entityTable;
     }
 }
+
+function outOfBoard(i, j) {
+    return i < 0 || tableH <= i || j < 0 || tableW <= j;
+}

@@ -1,4 +1,5 @@
 import { toSubscript } from "./util.mjs";
+import * as L from "./logical.mjs";
 
 const tileSize = 32; // tileの一辺の長さ[px]
 
@@ -57,6 +58,8 @@ canvas.height = tableH * tileSize;
 
 const ctx = new ExpandedContext2D(canvas, tileSize);
 
+// Tile: 自身の座標を持ち、描画できるもの
+// TS移行時にはInterfaceとして実装するとよさそう
 class Tile {
     constructor(i, j) {
         this.i = i;
@@ -66,49 +69,71 @@ class Tile {
     render() { }
 }
 
-class StageTile extends Tile {
-    constructor(i, j, fillColor, strokeColor) {
-        super(i, j);
-        this.fillColor = fillColor;
-        this.strokeColor = strokeColor;
-    }
+class Floor extends Tile {
+
+    static fillColor = "#f0f0f0";
+    static strokeColor = "#d6d6d6";
 
     render() {
-        ctx.raw.fillStyle = this.fillColor;
+        ctx.raw.fillStyle = Floor.fillColor;
         ctx.fillSquare(this.j, this.i, 1);
-        ctx.raw.strokeStyle = this.strokeColor;
+        ctx.raw.strokeStyle = Floor.strokeColor;
         ctx.strokeSquare(this.j, this.i, 1);
     }
 }
 
-class Floor extends StageTile {
-    constructor(i, j) {
-        super(i, j, "#f0f0f0", "#d6d6d6");
+class Wall extends Tile {
+
+    static fillColor = "#858585";
+    static strokeColor = "#d6d6d6";
+
+    render() {
+        ctx.raw.fillStyle = Wall.fillColor;
+        ctx.fillSquare(this.j, this.i, 1);
+        ctx.raw.strokeStyle = Wall.strokeColor;
+        ctx.strokeSquare(this.j, this.i, 1);
     }
 }
 
-class Wall extends StageTile {
-    constructor(i, j) {
-        super(i, j, "#858585", "#d6d6d6");
-    }
-}
+class Goal extends Tile {
 
-class Goal extends StageTile {
-    constructor(i, j, targetExpr) {
-        super(i, j, "#3ea357", "d6d6d6");
-        this.targetExpr = targetExpr;
+    constructor(i, j, goalExpr) {
+        super(i, j);
+        this.goalExpr = goalExpr;
+        Goal.goals.push(this);
     }
 
-    static create(targetExpr) {
+    static fillColor = "#3ea357";
+    static strokeColor = "#d6d6d6";
+
+    render() {
+        ctx.raw.fillStyle = Goal.fillColor;
+        ctx.fillSquare(this.j, this.i, 1);
+        ctx.raw.strokeStyle = Goal.strokeColor;
+        ctx.strokeSquare(this.j, this.i, 1);
+    }
+
+    static create(goalExpr) {
         return class extends Goal {
             constructor(i, j) {
-                super(i, j, targetExpr);
+                super(i, j, goalExpr);
             }
         }
+    }
+
+    static goals = [];
+
+    static isEveryGoalSatisfied() {
+        return Goal.goals.every(goal => {
+
+            const placedEntity = entityTable[goal.i][goal.j];
+            return placedEntity instanceof ExprBox && L.equal(placedEntity.expr, goal.goalExpr);
+        });
     }
 }
 
 class Entity extends Tile {
+
     move(di, dj) {
         const ni = this.i + di, nj = this.j + dj;
 
@@ -125,10 +150,10 @@ class Entity extends Tile {
             this.j = nj;
 
             return true;
-        } else if (this instanceof Box && entityTable[ni][nj] instanceof Box) {
+        } else if (this instanceof ExprBox && entityTable[ni][nj] instanceof ExprBox) {
 
             // 論理式の合成を試みる
-            const combined = combine(this.expr, entityTable[ni][nj].expr);
+            const combined = L.combine(this.expr, entityTable[ni][nj].expr);
 
             if (combined == null) {
                 // 合成できない
@@ -136,7 +161,7 @@ class Entity extends Tile {
             }
 
             entityTable[this.i][this.j] = new Empty(this.i, this.j);
-            entityTable[ni][nj] = new Box(ni, nj, combined);
+            entityTable[ni][nj] = new ExprBox(ni, nj, combined);
 
             return true;
         }
@@ -155,22 +180,22 @@ class Player extends Entity {
     }
 }
 
-class Box extends Entity {
+class ExprBox extends Entity {
     constructor(i, j, expr) {
         super(i, j);
         this.expr = expr;
-        this.index = Box.addExprList(expr);
+        this.exprIndex = ExprBox.addExprList(expr);
     }
 
     render() {
         ctx.raw.fillStyle = "red";
         ctx.fillSquare(this.j + 0.1, this.i + 0.1, 0.8);
 
-        ctx.fillText("P" + toSubscript(this.index + 1), "black", this.i, this.j);
+        ctx.fillText("P" + toSubscript(this.exprIndex + 1), "black", this.i, this.j);
     }
 
     static create(expr) {
-        return class extends Box {
+        return class extends ExprBox {
             constructor(i, j) {
                 super(i, j, expr);
             }
@@ -178,33 +203,30 @@ class Box extends Entity {
     }
 
     static addExprList(expr) {
-        let index = Box.exprList.indexOf(expr);
+        let exprIndex = ExprBox.exprList.indexOf(expr);
 
-        if (index == -1) {
-            index = Box.exprList.length;
-            Box.exprList.push(expr);
+        if (exprIndex == -1) {
+            exprIndex = ExprBox.exprList.length;
+            ExprBox.exprList.push(expr);
 
             const li = document.createElement("li");
-            const latexText = `P_{${index + 1}} = ${expr.toTeX()}`;
+            const latexText = `P_{${exprIndex + 1}} = ${L.toTex(expr)}`;
 
             katex.render(latexText, li, { throwOnError: false, displayMode: false });
             exprListElement.appendChild(li);
         }
-        return index;
+
+        return exprIndex;
     }
 
     static exprList = [];
 }
 
-function outOfBoard(i, j) {
-    return i < 0 || tableH <= i || j < 0 || tableW <= j;
-}
+const P1 = ExprBox.create(L.impl(L.v("P"), L.v("Q")));
+const P2 = ExprBox.create(L.v("P"));
+const P3 = ExprBox.create(L.not(L.v("Q")));
 
-const P1 = Box.create(new Impl(new Var("P"), new Var("Q")));
-const P2 = Box.create(new Var("P"));
-const P3 = Box.create(new Neg(new Var("Q")));
-
-const G1 = Goal.create(new Contr());
+const G1 = Goal.create(L.contr());
 
 const stageMapping = [Floor, Wall, G1];
 const entityMapping = [Empty, Player, P1, P2, P3];
@@ -284,6 +306,10 @@ document.addEventListener("keydown", e => {
 
     update();
     render();
+
+    if (Goal.isEveryGoalSatisfied()) {
+        // 全てのgoalが満たされたのでクリア
+    }
 });
 
 document.addEventListener("keyup", e => {
@@ -312,7 +338,7 @@ function reset() {
     movingStack.length = 0;
 
     exprListElement.replaceChildren();
-    Box.exprList.length = 0;
+    ExprBox.exprList.length = 0;
 
     render();
 }
@@ -324,7 +350,7 @@ function redo() {
     movingStack.pop();
 
     exprListElement.replaceChildren();
-    Box.exprList.length = 0;
+    ExprBox.exprList.length = 0;
 
     initTable();
 
