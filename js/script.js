@@ -1,5 +1,5 @@
-import { toSubscript } from "./util.mjs";
-import * as L from "./logical.mjs";
+import * as util from "./util.mjs";
+import { LogicalExpr as L } from "./logical.mjs";
 
 const tileSize = 32; // tileの一辺の長さ[px]
 
@@ -135,25 +135,29 @@ class Goal extends Tile {
 class Entity extends Tile {
 
     move(di, dj) {
-        const ni = this.i + di, nj = this.j + dj;
+        const nextI = this.i + di, nextJ = this.j + dj;
 
-        if (outOfBoard(ni, nj) || stageTable[ni][nj] instanceof Wall) {
+        if (util.outOfGrid(tableH, tableW, nextI, nextJ) || stageTable[nextI][nextJ] instanceof Wall) {
             // 行先は画面外 or 壁
             return false;
         }
 
-        if (entityTable[ni][nj] instanceof Empty || entityTable[ni][nj].move(di, dj)) {
+        if (entityTable[nextI][nextJ] instanceof Empty || entityTable[nextI][nextJ].move(di, dj)) {
             // 移動先に何もないか、押して移動できる
-            entityTable[ni][nj] = entityTable[this.i][this.j];
+            entityTable[nextI][nextJ] = entityTable[this.i][this.j];
             entityTable[this.i][this.j] = new Empty(this.i, this.j);
-            this.i = ni;
-            this.j = nj;
+            this.i = nextI;
+            this.j = nextJ;
 
             return true;
-        } else if (this instanceof ExprBox && entityTable[ni][nj] instanceof ExprBox) {
+        }
+
+        if (this instanceof ExprBox && entityTable[nextI][nextJ] instanceof ExprBox) {
+
+            console.log(entityTable[nextI][nextJ].expr);
 
             // 論理式の合成を試みる
-            const combined = L.combine(this.expr, entityTable[ni][nj].expr);
+            const combined = L.combine(this.expr, entityTable[nextI][nextJ].expr);
 
             if (combined == null) {
                 // 合成できない
@@ -161,12 +165,11 @@ class Entity extends Tile {
             }
 
             entityTable[this.i][this.j] = new Empty(this.i, this.j);
-            entityTable[ni][nj] = new ExprBox(ni, nj, combined);
+            entityTable[nextI][nextJ] = new (ExprBox.create(combined))(nextI, nextJ);
 
             return true;
         }
 
-        // 押せなかった
         return false;
     }
 }
@@ -178,39 +181,58 @@ class Player extends Entity {
         ctx.raw.fillStyle = "blue";
         ctx.fillCircle(this.j + 0.5, this.i + 0.5, 0.4);
     }
+
+    move(di, dj) {
+        // 背後の座標を記録
+        const backI = this.i - di, backJ = this.j - dj;
+
+        const ok = super.move(di, dj);
+        if (!ok) return false;
+
+        // 背後が箱なら、split()を実行する
+
+        if (util.outOfGrid(tableH, tableW, backI, backJ) || stageTable[backI][backJ] instanceof Wall) {
+            return;
+        }
+
+
+        if (entityTable[backI][backJ] instanceof ExprBox) {
+            console.log(entityTable[backI][backJ]);
+        }
+    }
 }
 
 class ExprBox extends Entity {
-    constructor(i, j, expr) {
-        super(i, j);
-        this.expr = expr;
-        this.exprIndex = ExprBox.addExprList(expr);
-    }
 
     render() {
         ctx.raw.fillStyle = "red";
         ctx.fillSquare(this.j + 0.1, this.i + 0.1, 0.8);
 
-        ctx.fillText("P" + toSubscript(this.exprIndex + 1), "black", this.i, this.j);
+        ctx.fillText("P" + util.toSubscript(this.exprIndex + 1), "black", this.i, this.j);
     }
 
     static create(expr) {
+
+        const index = ExprBox.addExprList(expr);
         return class extends ExprBox {
             constructor(i, j) {
-                super(i, j, expr);
+                super(i, j);
+                this.expr = expr;
+                this.exprIndex = index;
             }
         }
     }
 
     static addExprList(expr) {
-        let exprIndex = ExprBox.exprList.indexOf(expr);
+        let exprIndex = ExprBox.exprList.findIndex(e => L.equal(e, expr));
 
         if (exprIndex == -1) {
             exprIndex = ExprBox.exprList.length;
             ExprBox.exprList.push(expr);
 
+            // 多分ここらへんのコードは別のクラスに任せるべき
             const li = document.createElement("li");
-            const latexText = `P_{${exprIndex + 1}} = ${L.toTex(expr)}`;
+            const latexText = `P_{${exprIndex + 1}} = ${expr.toTex()}`;
 
             katex.render(latexText, li, { throwOnError: false, displayMode: false });
             exprListElement.appendChild(li);
@@ -222,14 +244,12 @@ class ExprBox extends Entity {
     static exprList = [];
 }
 
-const P1 = ExprBox.create(L.impl(L.v("P"), L.v("Q")));
-const P2 = ExprBox.create(L.v("P"));
-const P3 = ExprBox.create(L.not(L.v("Q")));
+const P1 = ExprBox.create(L.and(L.var("P"), L.var("Q")));
 
 const G1 = Goal.create(L.contr());
 
 const stageMapping = [Floor, Wall, G1];
-const entityMapping = [Empty, Player, P1, P2, P3];
+const entityMapping = [Empty, Player, P1];
 
 function createTable(data, mapping) {
     return data.map((line, i) => line.map((tile, j) => new mapping[tile](i, j)));
